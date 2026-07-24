@@ -1,31 +1,41 @@
-use imagehub::services::ImageHub;
+use imagehub::ImageHub;
 use std::path::Path;
 
 fn config_path() -> std::path::PathBuf {
-    let exe = std::env::current_exe().unwrap_or_else(|_| Path::new(".").to_path_buf());
-    let dir = exe.parent().unwrap_or_else(|| Path::new("."));
-    dir.join("config.ini")
+    #[cfg(target_os = "windows")]
+    {
+        let exe = std::env::current_exe().unwrap_or_else(|_| Path::new(".").to_path_buf());
+        let dir = exe.parent().unwrap_or_else(|| Path::new("."));
+        dir.join("config.ini")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let base = dirs::config_dir().unwrap_or_else(|| Path::new(".").to_path_buf());
+        let dir = base.join("imagehub");
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join("config.ini")
+    }
 }
 
-fn load_config() -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+fn load_config() -> (String, String, String, String) {
     let path = config_path();
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
-        Err(_) => return (None, None, None, None),
+        Err(_) => return (String::new(), String::new(), String::new(), String::new()),
     };
-    let mut username = None;
-    let mut password = None;
-    let mut cookie = None;
-    let mut auth_token = None;
+    let mut username = String::new();
+    let mut password = String::new();
+    let mut cookie = String::new();
+    let mut auth_token = String::new();
     for line in content.lines() {
         if let Some(v) = line.strip_prefix("username=") {
-            username = Some(v.to_string());
+            username = v.to_string();
         } else if let Some(v) = line.strip_prefix("password=") {
-            password = Some(v.to_string());
+            password = v.to_string();
         } else if let Some(v) = line.strip_prefix("cookie=") {
-            cookie = Some(v.to_string());
+            cookie = v.to_string();
         } else if let Some(v) = line.strip_prefix("authtoken=") {
-            auth_token = Some(v.to_string());
+            auth_token = v.to_string();
         }
     }
     (username, password, cookie, auth_token)
@@ -34,17 +44,11 @@ fn load_config() -> (Option<String>, Option<String>, Option<String>, Option<Stri
 fn save_config(
     username: &str,
     password: &str,
-    cookie: Option<&str>,
-    auth_token: Option<&str>,
+    cookie: &str,
+    auth_token: &str,
 ) -> Result<(), std::io::Error> {
     let path = config_path();
-    let mut content = format!("username={}\npassword={}\n", username, password);
-    if let Some(c) = cookie {
-        content.push_str(&format!("cookie={}\n", c));
-    }
-    if let Some(t) = auth_token {
-        content.push_str(&format!("authtoken={}\n", t));
-    }
+    let content = format!("username={}\npassword={}\ncookie={}\nauthtoken={}\n", username, password, cookie, auth_token);
     std::fs::write(&path, content)
 }
 
@@ -59,18 +63,7 @@ fn remove_config() -> Result<(), std::io::Error> {
 fn main() {
     let mut hub = ImageHub::new();
     let (cfg_user, cfg_pass, cfg_cookie, cfg_auth_token) = load_config();
-
-    unsafe {
-        if let Some(u) = &cfg_user {
-            imagehub::config::USERNAME = Box::leak(u.clone().into_boxed_str());
-        }
-        if let Some(p) = &cfg_pass {
-            imagehub::config::PASSWORD = Box::leak(p.clone().into_boxed_str());
-        }
-    }
-    if let (Some(c), Some(t)) = (cfg_cookie, cfg_auth_token) {
-        hub.set_session(c, t);
-    }
+    hub.set_auth(cfg_cookie, cfg_auth_token, cfg_user, cfg_pass);
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -107,21 +100,43 @@ fn repl(hub: &mut ImageHub) {
         }
         let parts: Vec<&str> = line.trim().split_whitespace().collect();
         let cmd = parts[0].strip_prefix('/').unwrap_or(parts[0]);
-        let mut fake_args = vec!["imagehub".to_string(), cmd.to_string()];
-        for p in &parts[1..] {
-            fake_args.push(p.to_string());
-        }
         match cmd {
             "exit" | "quit" => {
                 println!("再见");
                 break;
             }
             "help" => print_repl_help(),
-            "login" => cmd_login_repl(hub, &fake_args),
-            "config" => cmd_config(hub, &fake_args),
+            "login" => {
+                if parts.len() < 3 {
+                    eprintln!("用法: /login <用户名> <密码>");
+                } else {
+                    match hub.login(parts[1], parts[2]) {
+                        Ok(()) => println!("登录成功"),
+                        Err(e) => eprintln!("登录失败: {}", e),
+                    }
+                }
+            }
             "list" => cmd_list(hub),
-            "upload" => cmd_upload(hub, &fake_args),
-            "delete" => cmd_delete(hub, &fake_args),
+            "upload" => {
+                if parts.len() < 2 {
+                    eprintln!("用法: /upload <文件路径>");
+                } else {
+                    match hub.upload_image(parts[1]) {
+                        Ok(info) => println!("上传成功: [{}] {} {}", info.id, info.title, info.url),
+                        Err(e) => eprintln!("上传失败: {}", e),
+                    }
+                }
+            }
+            "delete" => {
+                if parts.len() < 2 {
+                    eprintln!("用法: /delete <图片ID>");
+                } else {
+                    match hub.delete_image(parts[1]) {
+                        Ok(()) => println!("删除成功"),
+                        Err(e) => eprintln!("删除失败: {}", e),
+                    }
+                }
+            }
             _ => println!("未知命令: {}，输入 /help 查看可用命令", cmd),
         }
     }
@@ -129,8 +144,7 @@ fn repl(hub: &mut ImageHub) {
 
 fn print_repl_help() {
     println!("可用命令:");
-    println!("  /login [<用户名> <密码>]  验证登录（可选指定账号，否则用已配置的）");
-    println!("  /config <用户名> <密码>  设置账号密码");
+    println!("  /login <用户名> <密码>    登录");
     println!("  /list                   查看图片列表");
     println!("  /upload <文件路径>      上传图片");
     println!("  /delete <图片ID>        删除图片");
@@ -139,7 +153,8 @@ fn print_repl_help() {
 }
 
 fn print_help() {
-    eprintln!("用法: imagehub [-i | <命令> [参数]]");
+    let prog = std::env::args().next().unwrap_or_else(|| "imagehub".into());
+    eprintln!("用法: {} [-i | <命令> [参数]]", prog);
     eprintln!("选项:");
     eprintln!("  -i                      进入交互式 REPL 模式");
     eprintln!("命令:");
@@ -152,33 +167,27 @@ fn print_help() {
 
 fn cmd_login(hub: &mut ImageHub, args: &[String]) {
     if args.len() < 4 {
-        eprintln!("用法: cli login <用户名> <密码>");
+        eprintln!("用法: {} login <用户名> <密码>", args[0]);
         return;
     }
     let username = &args[2];
     let password = &args[3];
 
-    unsafe {
-        imagehub::config::USERNAME = Box::leak(username.clone().into_boxed_str());
-        imagehub::config::PASSWORD = Box::leak(password.clone().into_boxed_str());
-    }
-
-    hub.clear_session();
-    match imagehub::api::login(username, password) {
-        Ok((cookie, auth_token)) => {
-            hub.set_session(cookie.clone(), auth_token.clone());
-            if let Err(e) = save_config(username, password, Some(&cookie), Some(&auth_token)) {
+    match hub.login(username, password) {
+        Ok(()) => {
+            let (cookie, auth_token, _, _) = hub.get_auth();
+            if let Err(e) = save_config(username, password, cookie, auth_token) {
                 eprintln!("保存配置失败: {}", e);
-            } else {
-                println!("登录成功");
+                return;
             }
+            println!("登录成功");
         }
         Err(e) => eprintln!("登录失败: {}", e),
     }
 }
 
 fn cmd_logout(hub: &mut ImageHub) {
-    hub.clear_session();
+    hub.set_auth(String::new(), String::new(), String::new(), String::new());
     if let Err(e) = remove_config() {
         eprintln!("清除配置失败: {}", e);
     } else {
@@ -203,7 +212,7 @@ fn cmd_list(hub: &mut ImageHub) {
 
 fn cmd_upload(hub: &mut ImageHub, args: &[String]) {
     if args.len() < 3 {
-        eprintln!("用法: cli upload <文件路径>");
+        eprintln!("用法: {} upload <文件路径>", args[0]);
         return;
     }
     match hub.upload_image(&args[2]) {
@@ -212,45 +221,9 @@ fn cmd_upload(hub: &mut ImageHub, args: &[String]) {
     }
 }
 
-fn cmd_config(hub: &mut ImageHub, args: &[String]) {
-    if args.len() < 4 {
-        eprintln!("用法: /config <用户名> <密码>");
-        return;
-    }
-    let username = &args[2];
-    let password = &args[3];
-    unsafe {
-        imagehub::config::USERNAME = Box::leak(username.clone().into_boxed_str());
-        imagehub::config::PASSWORD = Box::leak(password.clone().into_boxed_str());
-    }
-    hub.clear_session();
-    println!("账号密码已设置");
-}
-
-fn cmd_login_repl(hub: &mut ImageHub, args: &[String]) {
-    let (username, password): (&str, &str) = if args.len() >= 4 {
-        (args[2].as_str(), args[3].as_str())
-    } else {
-        (unsafe { imagehub::config::USERNAME }, unsafe { imagehub::config::PASSWORD })
-    };
-    match imagehub::api::login(username, password) {
-        Ok((cookie, auth_token)) => {
-            if args.len() >= 4 {
-                unsafe {
-                    imagehub::config::USERNAME = Box::leak(username.to_string().into_boxed_str());
-                    imagehub::config::PASSWORD = Box::leak(password.to_string().into_boxed_str());
-                }
-            }
-            hub.set_session(cookie, auth_token);
-            println!("登录成功");
-        }
-        Err(e) => eprintln!("登录失败: {}", e),
-    }
-}
-
 fn cmd_delete(hub: &mut ImageHub, args: &[String]) {
     if args.len() < 3 {
-        eprintln!("用法: cli delete <图片ID>");
+        eprintln!("用法: {} delete <图片ID>", args[0]);
         return;
     }
     match hub.delete_image(&args[2]) {

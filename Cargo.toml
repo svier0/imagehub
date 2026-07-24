@@ -1,7 +1,9 @@
 [package]
 name = "imagehub"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+description = "CLI tool and library for managing imagehub.cc account images"
+license = "MIT"
 
 
 [dependencies]
@@ -11,6 +13,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 percent-encoding = "2"
 md5 = "0.7"
+dirs = "6"
 
 [profile.release]
 opt-level = "z"

@@ -1,6 +1,6 @@
 # ImageHub CLI
 
-命令行工具，用于管理 [imagehub.cc](https://www.imagehub.cc) 账号下的图片资源。
+命令行工具和库，用于管理 [imagehub.cc](https://www.imagehub.cc) 账号下的图片资源。
 
 ## 功能
 
@@ -8,10 +8,6 @@
 - 查看图片列表
 - 上传图片
 - 删除图片
-
-## 下载
-
-从 [Releases](https://github.com/viernqmo/imagehub/releases) 下载对应平台的可执行文件。
 
 ## 使用
 
@@ -43,13 +39,12 @@ imagehub -i
 进入交互式 shell，支持以下命令：
 
 ```
-imagehub> /config <用户名> <密码>  设置账号密码
-imagehub> /login [<用户名> <密码>]  验证登录
-imagehub> /list                    查看图片列表
-imagehub> /upload <文件路径>       上传图片
-imagehub> /delete <图片ID>         删除图片
-imagehub> /exit                    退出
-imagehub> /help                    帮助
+imagehub> /login <用户名> <密码>  登录
+imagehub> /list                  查看图片列表
+imagehub> /upload <文件路径>     上传图片
+imagehub> /delete <图片ID>       删除图片
+imagehub> /exit                  退出
+imagehub> /help                  帮助
 ```
 
 ## 配置文件

@@ -4,6 +4,8 @@ use reqwest::header;
 use crate::models::ImageInfo;
 use crate::{Error, Result};
 
+const BASE_URL: &str = "https://www.imagehub.cc";
+
 fn extract_set_cookie_value(resp: &reqwest::blocking::Response, name: &str) -> Option<String> {
     for value in resp.headers().get_all(header::SET_COOKIE) {
         let s = value.to_str().ok()?;
@@ -23,7 +25,7 @@ fn build_client() -> Result<reqwest::blocking::Client> {
 
 pub fn login(username: &str, password: &str) -> Result<(String, String)> {
     let client = build_client()?;
-    let login_url = format!("{}/login", crate::config::BASE_URL);
+    let login_url = format!("{}/login", BASE_URL);
 
     let resp = client
         .get(&login_url)
@@ -63,13 +65,12 @@ pub fn login(username: &str, password: &str) -> Result<(String, String)> {
     Ok((cookie, auth_token))
 }
 
-pub fn list_images(cookie: &str) -> Result<Vec<ImageInfo>> {
-    let username = unsafe { crate::config::USERNAME };
+pub fn list_images(cookie: &str, username: &str) -> Result<Vec<ImageInfo>> {
     if username.is_empty() {
         return Err(Error::HttpError("用户名未设置".to_string()));
     }
 
-    let url = format!("{}/{}/?list=images&sort=date_desc&page=1", crate::config::BASE_URL, username);
+    let url = format!("{}/{}/?list=images&sort=date_desc&page=1", BASE_URL, username);
 
     let client = build_client()?;
     let resp = client
@@ -135,7 +136,7 @@ pub fn upload_image(cookie: &str, auth_token: &str, file_path: &str) -> Result<I
     use reqwest::blocking::multipart;
 
     let client = build_client()?;
-    let url = format!("{}/json", crate::config::BASE_URL);
+    let url = format!("{}/json", BASE_URL);
 
     let path = std::path::Path::new(file_path);
     let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("file");
@@ -211,7 +212,7 @@ pub fn upload_image(cookie: &str, auth_token: &str, file_path: &str) -> Result<I
 
 pub fn delete_image(cookie: &str, auth_token: &str, image_id: &str) -> Result<()> {
     let client = build_client()?;
-    let url = format!("{}/json", crate::config::BASE_URL);
+    let url = format!("{}/json", BASE_URL);
 
     let resp = client
         .post(&url)
