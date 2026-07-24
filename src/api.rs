@@ -1,6 +1,5 @@
 use regex::Regex;
 use reqwest::header;
-use scraper::{Html, Selector};
 
 use crate::models::ImageInfo;
 use crate::{Error, Result};
@@ -90,20 +89,21 @@ fn percent_decode(s: &str) -> Result<String> {
 }
 
 fn parse_image_list(html: &str) -> Result<Vec<ImageInfo>> {
-    let doc = Html::parse_document(html);
-
-    let container_sel = Selector::parse(".pad-content-listing")
-        .map_err(|e| Error::HttpError(format!("选择器编译失败: {}", e)))?;
-    let item_sel = Selector::parse(".list-item[data-object]")
-        .map_err(|e| Error::HttpError(format!("选择器编译失败: {}", e)))?;
-
-    let container = doc.select(&container_sel).next()
+    let start = html.find(r#"class="pad-content-listing""#)
         .ok_or_else(|| Error::HttpError("未找到 pad-content-listing".to_string()))?;
+    let mut html = &html[start..];
 
     let mut images = Vec::new();
-    for item in container.select(&item_sel) {
-        let raw = item.value().attr("data-object")
-            .ok_or_else(|| Error::HttpError("缺少 data-object".to_string()))?;
+    loop {
+        let Some(data_start) = html.find(r#"data-object=""#) else {
+            return Ok(images);
+        };
+        let value_start = data_start + r#"data-object=""#.len();
+        let value_end = html[value_start..].find('"')
+            .map(|pos| value_start + pos)
+            .ok_or_else(|| Error::HttpError("data-object 值缺少结束引号".to_string()))?;
+
+        let raw = &html[value_start..value_end];
         let json_str = percent_decode(raw)?;
         let obj: serde_json::Value = serde_json::from_str(&json_str)
             .map_err(|e| Error::HttpError(format!("JSON 解析失败: {}", e)))?;
@@ -122,9 +122,9 @@ fn parse_image_list(html: &str) -> Result<Vec<ImageInfo>> {
             width: obj_get(&obj, "width"),
             height: obj_get(&obj, "height"),
         });
-    }
 
-    Ok(images)
+        html = &html[value_end..];
+    }
 }
 
 fn obj_get(obj: &serde_json::Value, key: &str) -> String {
