@@ -96,11 +96,19 @@ fn parse_image_list(html: &str) -> Result<Vec<ImageInfo>> {
 
     let mut images = Vec::new();
     loop {
-        let Some(data_start) = html.find(r#"data-object=""#) else {
+        let Some(obj_start) = html.find("data-object=") else {
             return Ok(images);
         };
-        let value_start = data_start + r#"data-object=""#.len();
-        let value_end = html[value_start..].find('"')
+        let after_eq = obj_start + "data-object=".len();
+        if after_eq >= html.len() {
+            return Ok(images);
+        }
+        let quote = html.as_bytes()[after_eq] as char;
+        if quote != '"' && quote != '\'' {
+            return Err(Error::HttpError("data-object 值的引号格式异常".to_string()));
+        }
+        let value_start = after_eq + 1;
+        let value_end = html[value_start..].find(quote)
             .map(|pos| value_start + pos)
             .ok_or_else(|| Error::HttpError("data-object 值缺少结束引号".to_string()))?;
 
@@ -124,7 +132,7 @@ fn parse_image_list(html: &str) -> Result<Vec<ImageInfo>> {
             height: obj_get(&obj, "height"),
         });
 
-        html = &html[value_end..];
+        html = &html[value_end + 1..];
     }
 }
 
