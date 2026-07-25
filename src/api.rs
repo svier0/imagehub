@@ -6,6 +6,31 @@ use crate::{Error, Result};
 
 const BASE_URL: &str = "https://www.imagehub.cc";
 
+fn response_body(resp: &mut reqwest::blocking::Response) -> Result<String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    resp.read_to_end(&mut bytes)
+        .map_err(|e| Error::HttpError(format!("读取响应失败: {}", e)))?;
+
+    let content_encoding = resp.headers()
+        .get(header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let decoded: Vec<u8> = if content_encoding.contains("gzip") || bytes.starts_with(&[0x1f, 0x8b]) {
+        let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+        let mut out = Vec::new();
+        decoder.read_to_end(&mut out)
+            .map_err(|e| Error::HttpError(format!("gzip 解压失败: {}", e)))?;
+        out
+    } else {
+        bytes
+    };
+
+    String::from_utf8(decoded)
+        .map_err(|e| Error::HttpError(format!("UTF-8 解码失败: {}", e)))
+}
+
 fn extract_set_cookie_value(resp: &reqwest::blocking::Response, name: &str) -> Option<String> {
     for value in resp.headers().get_all(header::SET_COOKIE) {
         let s = value.to_str().ok()?;
@@ -27,16 +52,16 @@ pub fn login(username: &str, password: &str) -> Result<(String, String)> {
     let client = build_client()?;
     let login_url = format!("{}/login", BASE_URL);
 
-    let resp = client
+    let mut resp = client
         .get(&login_url)
-        .header(header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36")
         .send()
         .map_err(|e| Error::HttpError(format!("GET /login 失败: {}", e)))?;
 
     let phpsessid = extract_set_cookie_value(&resp, "PHPSESSID")
         .ok_or_else(|| Error::HttpError("未收到 PHPSESSID".to_string()))?;
 
-    let body = resp.text().map_err(|e| Error::HttpError(e.to_string()))?;
+    let body = response_body(&mut resp)?;
 
     let re = Regex::new(r#"PF\.obj\.config\.auth_token = "([^"]+)""#)
         .map_err(|e| Error::HttpError(format!("正则编译失败: {}", e)))?;
@@ -45,16 +70,32 @@ pub fn login(username: &str, password: &str) -> Result<(String, String)> {
         .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
         .ok_or_else(|| Error::HttpError("无法从页面提取 auth_token".to_string()))?;
 
+    let form_body = format!("login-subject={}&password={}&auth_token={}", username, password, auth_token);
+
     let resp = client
         .post(&login_url)
-        .header(header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .header(header::REFERER, &login_url)
-        .header(header::COOKIE, &phpsessid)
-        .form(&[
-            ("login-subject", username),
-            ("password", password),
-            ("auth_token", &auth_token),
-        ])
+        .header("Host", "www.imagehub.cc")
+        .header("Connection", "keep-alive")
+        .header("Content-Length", form_body.len().to_string())
+        .header("Pragma", "no-cache")
+        .header("Cache-Control", "no-cache")
+        .header("sec-ch-ua", r#""Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150""#)
+        .header("sec-ch-ua-mobile", "?0")
+        .header("sec-ch-ua-platform", "\"Windows\"")
+        .header("Accept-Language", "zh-CN,zh;q=0.9")
+        .header("Upgrade-Insecure-Requests", "1")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36")
+        .header("Origin", "https://www.imagehub.cc")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+        .header("Sec-Fetch-Site", "same-origin")
+        .header("Sec-Fetch-Mode", "navigate")
+        .header("Sec-Fetch-User", "?1")
+        .header("Sec-Fetch-Dest", "document")
+        .header("Referer", &login_url)
+        .header("Accept-Encoding", "gzip, deflate, br, zstd")
+        .header("Cookie", &phpsessid)
+        .body(form_body)
         .send()
         .map_err(|e| Error::HttpError(format!("POST /login 失败: {}", e)))?;
 
@@ -73,14 +114,13 @@ pub fn list_images(cookie: &str, username: &str) -> Result<Vec<ImageInfo>> {
     let url = format!("{}/{}/?list=images&sort=date_desc&page=1", BASE_URL, username);
 
     let client = build_client()?;
-    let resp = client
+    let mut resp = client
         .get(&url)
         .header(header::COOKIE, cookie)
-        .header(header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .send()
         .map_err(|e| Error::HttpError(format!("GET 列表失败: {}", e)))?;
 
-    let body = resp.text().map_err(|e| Error::HttpError(e.to_string()))?;
+    let body = response_body(&mut resp)?;
     parse_image_list(&body)
 }
 
@@ -183,15 +223,14 @@ pub fn upload_image(cookie: &str, auth_token: &str, file_path: &str) -> Result<I
         .text("mimetype", mime_str.to_string())
         .text("checksum", checksum_hex);
 
-    let resp = client
+    let mut resp = client
         .post(&url)
-        .header(header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .header(header::COOKIE, cookie)
         .multipart(form)
         .send()
         .map_err(|e| Error::HttpError(format!("POST 上传失败: {}", e)))?;
 
-    let body = resp.text().map_err(|e| Error::HttpError(e.to_string()))?;
+    let body = response_body(&mut resp)?;
     let json: serde_json::Value = serde_json::from_str(&body)
         .map_err(|e| Error::HttpError(format!("JSON 解析失败: {}", e)))?;
 
@@ -222,9 +261,8 @@ pub fn delete_image(cookie: &str, auth_token: &str, image_id: &str) -> Result<()
     let client = build_client()?;
     let url = format!("{}/json", BASE_URL);
 
-    let resp = client
+    let mut resp = client
         .post(&url)
-        .header(header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .header(header::COOKIE, cookie)
         .header("X-Requested-With", "XMLHttpRequest")
         .form(&[
@@ -237,7 +275,7 @@ pub fn delete_image(cookie: &str, auth_token: &str, image_id: &str) -> Result<()
         .send()
         .map_err(|e| Error::HttpError(format!("POST 删除失败: {}", e)))?;
 
-    let body = resp.text().map_err(|e| Error::HttpError(e.to_string()))?;
+    let body = response_body(&mut resp)?;
     let json: serde_json::Value = serde_json::from_str(&body)
         .map_err(|e| Error::HttpError(format!("JSON 解析失败: {}", e)))?;
 

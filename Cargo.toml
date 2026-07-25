@@ -1,6 +1,6 @@
 [package]
 name = "imagehub"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 description = "CLI tool and library for managing imagehub.cc account images"
 license = "MIT"
@@ -8,6 +8,7 @@ license = "MIT"
 
 [dependencies]
 reqwest = { version = "0.12", features = ["blocking", "multipart", "rustls-tls"], default-features = false }
+flate2 = "1"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
