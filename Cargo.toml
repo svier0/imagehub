@@ -1,6 +1,6 @@
 [package]
 name = "imagehub"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "CLI tool and library for managing imagehub.cc account images"
 license = "MIT"

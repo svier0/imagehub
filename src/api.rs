@@ -226,6 +226,11 @@ pub fn upload_image(cookie: &str, auth_token: &str, file_path: &str) -> Result<I
     let mut resp = client
         .post(&url)
         .header(header::COOKIE, cookie)
+        .header("X-Requested-With", "XMLHttpRequest")
+        .header("Referer", "https://www.imagehub.cc/")
+        .header("Origin", "https://www.imagehub.cc")
+        .header("Accept", "application/json, text/javascript, */*; q=0.01")
+        .header("Accept-Language", "zh-CN,zh;q=0.9")
         .multipart(form)
         .send()
         .map_err(|e| Error::HttpError(format!("POST 上传失败: {}", e)))?;
@@ -265,6 +270,10 @@ pub fn delete_image(cookie: &str, auth_token: &str, image_id: &str) -> Result<()
         .post(&url)
         .header(header::COOKIE, cookie)
         .header("X-Requested-With", "XMLHttpRequest")
+        .header("Referer", "https://www.imagehub.cc/")
+        .header("Origin", "https://www.imagehub.cc")
+        .header("Accept", "application/json, text/javascript, */*; q=0.01")
+        .header("Accept-Language", "zh-CN,zh;q=0.9")
         .form(&[
             ("auth_token", auth_token),
             ("action", "delete"),
